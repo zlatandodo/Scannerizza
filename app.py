@@ -33,8 +33,6 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-  [data-testid="stAppViewContainer"] { background: #0f1117; }
-  [data-testid="stHeader"] { background: #0f1117; }
   .block-container { padding-top: 1.5rem; }
   div[data-testid="stDataFrame"] { border-radius: 8px; }
   .stTabs [data-baseweb="tab-list"] { gap: 8px; }
