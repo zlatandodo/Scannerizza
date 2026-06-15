@@ -269,8 +269,8 @@ with tab_themes:
         return "font-weight:600"
 
     styled = (df_t.style
-        .applymap(color_score, subset=["Score"])
-        .applymap(color_pct,   subset=["1M %","3M %","1W %","1D %"])
+        .map(color_score, subset=["Score"])
+        .map(color_pct,   subset=["1M %","3M %","1W %","1D %"])
         .format({"Score": "{:.2f}", "1M %": "{:+.1f}%", "3M %": "{:+.1f}%",
                  "1W %": "{:+.1f}%", "1D %": "{:+.1f}%",
                  "TA": "{:.1f}", "FA": "{:.1f}", "ARS": "{:.0f}"})
@@ -413,7 +413,7 @@ with tab_cross:
         styled_c = (df_c.style
             .background_gradient(subset=["N.Scanner"], cmap="Oranges")
             .background_gradient(subset=["TA","FA","RS"], cmap="RdYlGn")
-            .applymap(color_pct, subset=["1D %"])
+            .map(color_pct, subset=["1D %"])
             .format({
                 "N.Scanner": "{:.0f} ●",
                 "Rank Tema": "#{:.0f}",
