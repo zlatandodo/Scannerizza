@@ -558,13 +558,19 @@ with tab_cross:
                 cid    = f"tv_{i}_{tv_sym.replace(':','_').replace('.','_')}"
 
                 with cols[i % n_cols]:
+                    scanner_badges = "".join(
+                        f"<span style='background:#f97316;color:#000;font-size:10px;"
+                        f"font-weight:700;padding:1px 6px;border-radius:4px;margin:1px'>{s.strip()}</span>"
+                        for s in row["Scanner"].split(",")
+                    )
                     st.markdown(
                         f"<div style='padding:4px 0 2px'>"
                         f"<strong style='font-size:14px'>{tv_sym}</strong> &nbsp;"
                         f"<span style='color:{color};font-weight:700'>{pct:+.2f}%</span> &nbsp;"
-                        f"<span style='color:#64748b;font-size:11px'>{row['N.Scanner']}● · "
-                        f"R#{row['Rank Tema']} · TA {row['TA']:.0f} · RS {row['RS']}</span>"
-                        f"</div>",
+                        f"<span style='color:#64748b;font-size:11px'>R#{row['Rank Tema']} · "
+                        f"TA {row['TA']:.0f} · RS {row['RS']}</span>"
+                        f"</div>"
+                        f"<div style='margin-bottom:4px'>{scanner_badges}</div>",
                         unsafe_allow_html=True,
                     )
                     components.html(f"""
