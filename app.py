@@ -93,25 +93,48 @@ def fetch_scanner(session, scanner_id):
 @st.cache_data(show_spinner=False, ttl=86400)
 def fetch_company_info(tv_symbol: str) -> dict:
     ticker = tv_symbol.split(":")[-1] if ":" in tv_symbol else tv_symbol
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
     try:
-        info = yf.Ticker(ticker).info
+        # Step 1: get crumb
+        session.get("https://fc.yahoo.com", timeout=5)
+        crumb_resp = session.get("https://query1.finance.yahoo.com/v1/test/getcrumb", timeout=5)
+        crumb = crumb_resp.text.strip()
+
+        # Step 2: fetch quoteSummary with crumb
+        url = (
+            f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{ticker}"
+            f"?modules=assetProfile,quoteType&crumb={crumb}"
+        )
+        resp = session.get(url, timeout=10)
+        resp.raise_for_status()
+        result = resp.json().get("quoteSummary", {}).get("result") or []
+        if not result:
+            return {"_error": "Nessun risultato da Yahoo Finance"}
+        data = result[0]
+        ap   = data.get("assetProfile", {})
+        qt   = data.get("quoteType", {})
         return {
-            "name":        info.get("longName", ""),
-            "sector":      info.get("sector", ""),
-            "industry":    info.get("industry", ""),
-            "country":     info.get("country", ""),
-            "employees":   info.get("fullTimeEmployees"),
-            "website":     info.get("website", ""),
-            "description": info.get("longBusinessSummary", ""),
+            "name":        qt.get("longName") or qt.get("shortName", ""),
+            "sector":      ap.get("sector", ""),
+            "industry":    ap.get("industry", ""),
+            "country":     ap.get("country", ""),
+            "employees":   ap.get("fullTimeEmployees"),
+            "website":     ap.get("website", ""),
+            "description": ap.get("longBusinessSummary", ""),
         }
-    except Exception:
-        return {}
+    except Exception as e:
+        return {"_error": str(e)}
 
 
 def company_card(tv_symbol: str, nome: str):
     info = fetch_company_info(tv_symbol)
-    if not info:
-        st.warning("Impossibile caricare le informazioni aziendali.")
+    if not info or "_error" in info:
+        st.warning(f"Impossibile caricare le informazioni. Errore: {info.get('_error','')}")
         return
 
     tags = " · ".join(filter(None, [
