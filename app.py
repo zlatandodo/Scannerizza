@@ -315,7 +315,16 @@ with st.spinner("⏳ Caricamento dati da AskLivermore..."):
 as_of = records[0]["as_of"] if records else ""
 
 # ── HEADER METRICS ─────────────────────────────────────────────────────────────
-st.markdown(f"### 📊 Dodo Weekly Scanner &nbsp; <span style='font-size:13px;color:#64748b'>Dati al {as_of}</span>", unsafe_allow_html=True)
+st.markdown(
+    f"<div style='margin-top:18px;margin-bottom:4px;display:flex;align-items:center;gap:14px'>"
+    f"<span style='font-size:48px;line-height:1'>🦤</span>"
+    f"<div>"
+    f"<div style='font-size:26px;font-weight:800;color:#f1f5f9;letter-spacing:-0.5px'>Dodo Weekly Scanner</div>"
+    f"<div style='font-size:12px;color:#64748b;margin-top:2px'>Dati al {as_of}</div>"
+    f"</div>"
+    f"</div>",
+    unsafe_allow_html=True,
+)
 
 c1, c2, c3, c4 = st.columns(4)
 top5 = records[:5]
