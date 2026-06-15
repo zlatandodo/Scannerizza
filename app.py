@@ -110,26 +110,21 @@ def fetch_company_info(tv_symbol: str) -> dict:
 
 def company_card(tv_symbol: str, nome: str):
     info = fetch_company_info(tv_symbol)
-    if not info or not info.get("description"):
-        st.caption("Descrizione non disponibile.")
+    if not info:
+        st.warning("Impossibile caricare le informazioni aziendali.")
         return
-    cols = st.columns([1, 2])
-    with cols[0]:
-        st.markdown(f"**{info.get('name') or nome}**")
-        st.caption(f"📌 {info.get('sector','')} · {info.get('industry','')}")
-        st.caption(f"🌍 {info.get('country','')}")
-        if info.get("employees"):
-            st.caption(f"👥 {info['employees']:,} dipendenti")
-        if info.get("website"):
-            st.markdown(f"[🔗 Sito]({info['website']})")
-    with cols[1]:
-        desc = info["description"]
-        st.markdown(
-            f"<div style='font-size:12px;line-height:1.6;color:#374151'>"
-            f"{desc[:600]}{'…' if len(desc)>600 else ''}"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
+
+    tags = " · ".join(filter(None, [
+        info.get("sector"), info.get("industry"), info.get("country")
+    ]))
+    emps = f" · 👥 {info['employees']:,}" if info.get("employees") else ""
+    site = f" · [🔗 sito]({info['website']})" if info.get("website") else ""
+    desc = info.get("description") or "Descrizione non disponibile."
+
+    st.markdown(f"**{info.get('name') or nome}**  \n"
+                f"<span style='color:#6b7280;font-size:12px'>{tags}{emps}{site}</span>",
+                unsafe_allow_html=True)
+    st.markdown(f"> {desc[:700]}{'…' if len(desc) > 700 else ''}")
 
 
 def weighted_score(theme):
@@ -497,8 +492,9 @@ with tab_cross:
         ]
         sel_info = st.selectbox("🔍 Info azienda", ticker_options, key="info_select")
         if sel_info != "— seleziona ticker —":
-            with st.container(border=True):
-                company_card(sel_info, sel_info)
+            st.markdown("---")
+            company_card(sel_info, sel_info)
+            st.markdown("---")
 
         st.divider()
 
