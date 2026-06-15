@@ -519,40 +519,61 @@ with tab_cross:
 
         # ── VISTA GRAFICI ─────────────────────────────────────────────────────
         else:
-            n_cols   = st.select_slider("Grafici per riga", [2, 3, 4], value=3, key="n_cols")
-            interval = st.select_slider("Timeframe", ["1D","1W","1M","3M","6M","12M"], value="3M", key="tv_interval")
-            rows_data = df_display.head(24).to_dict("records")  # max 24 grafici
+            gc1, gc2, gc3 = st.columns(3)
+            with gc1:
+                n_cols = st.select_slider("Grafici per riga", [1, 2, 3], value=2, key="n_cols")
+            with gc2:
+                interval = st.selectbox("Timeframe", ["D","W","M"], index=0,
+                                        format_func=lambda x: {"D":"Giornaliero","W":"Settimanale","M":"Mensile"}[x],
+                                        key="tv_interval")
+            with gc3:
+                chart_h = st.select_slider("Altezza grafici", [300, 380, 460], value=380, key="chart_h")
 
-            st.caption(f"Mostrando i primi {min(len(rows_data), 24)} titoli — clicca un grafico per aprirlo su TradingView")
+            rows_data = df_display.head(12).to_dict("records")
+            st.caption(f"Mostrando i primi {min(len(rows_data),12)} titoli · candele + EMA 21/50/200 + Volume")
 
             cols = st.columns(n_cols)
             for i, row in enumerate(rows_data):
                 tv_url = row["Ticker"]
-                tv_sym = tv_url.split("symbol=")[-1] if "symbol=" in tv_url else row.get("Nome","")
+                tv_sym = tv_url.split("symbol=")[-1] if "symbol=" in tv_url else ""
                 pct    = row["1D %"]
                 color  = "#22c55e" if pct >= 0 else "#ef4444"
+                cid    = f"tv_{i}_{tv_sym.replace(':','_').replace('.','_')}"
 
                 with cols[i % n_cols]:
                     st.markdown(
-                        f"**{tv_sym}** &nbsp;"
+                        f"<div style='padding:4px 0 2px'>"
+                        f"<strong style='font-size:14px'>{tv_sym}</strong> &nbsp;"
                         f"<span style='color:{color};font-weight:700'>{pct:+.2f}%</span> &nbsp;"
-                        f"<span style='color:#64748b;font-size:11px'>{row['N.Scanner']}● R#{row['Rank Tema']}</span>",
+                        f"<span style='color:#64748b;font-size:11px'>{row['N.Scanner']}● · "
+                        f"R#{row['Rank Tema']} · TA {row['TA']:.0f} · RS {row['RS']}</span>"
+                        f"</div>",
                         unsafe_allow_html=True,
                     )
                     components.html(f"""
-                    <div class="tradingview-widget-container">
-                      <div class="tradingview-widget-container__widget"></div>
-                      <script src="https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js" async>
-                      {{
-                        "symbol": "{tv_sym}",
-                        "width": "100%",
-                        "height": 200,
-                        "locale": "it",
-                        "dateRange": "{interval}",
-                        "colorTheme": "dark",
-                        "isTransparent": false,
-                        "autosize": false,
-                        "largeChartUrl": "https://www.tradingview.com/chart/?symbol={tv_sym}"
-                      }}
-                      </script>
-                    </div>""", height=220)
+                    <div id="{cid}" style="height:{chart_h}px;"></div>
+                    <script src="https://s3.tradingview.com/tv.js"></script>
+                    <script>
+                    new TradingView.widget({{
+                      "container_id": "{cid}",
+                      "autosize": true,
+                      "symbol": "{tv_sym}",
+                      "interval": "{interval}",
+                      "timezone": "Europe/Rome",
+                      "theme": "dark",
+                      "style": "1",
+                      "locale": "it",
+                      "toolbar_bg": "#1a1d27",
+                      "hide_top_toolbar": false,
+                      "hide_legend": false,
+                      "hide_side_toolbar": true,
+                      "allow_symbol_change": true,
+                      "save_image": false,
+                      "studies": [
+                        {{"id":"MAExp@tv-basicstudies","inputs":{{"length":21}}}},
+                        {{"id":"MAExp@tv-basicstudies","inputs":{{"length":50}}}},
+                        {{"id":"MAExp@tv-basicstudies","inputs":{{"length":200}}}},
+                        {{"id":"Volume@tv-basicstudies"}}
+                      ]
+                    }});
+                    </script>""", height=chart_h + 10)
