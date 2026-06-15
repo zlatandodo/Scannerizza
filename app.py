@@ -622,7 +622,7 @@ with tab_cross:
                     }});
                     </script>""", height=375)
                 else:
-                    st.info("👈 Seleziona una riga per il grafico inline")
+                    st.empty()
 
         # ── VISTA GRAFICI ─────────────────────────────────────────────────────
         else:
