@@ -158,9 +158,10 @@ def build_crossref(records, scanner_results, sel_theme_ids, sel_scanner_ids):
         meta = ticker_meta[tk]
         tv   = meta.get("tv_symbol", "") or tk
         best = min(themes, key=lambda x: x["rank"])
+        mktcap = meta.get("market_cap") or meta.get("mktcap") or 0
+        volume = meta.get("volume") or meta.get("avg_vol_50") or 0
         rows.append({
-            "📈":           f"https://www.tradingview.com/chart/?symbol={tv}",
-            "Ticker":       tk,
+            "Ticker":       f"https://www.tradingview.com/chart/?symbol={tv}",
             "Nome":         (meta.get("name") or "")[:28],
             "N.Scanner":    len(ticker_scanners[tk]),
             "Rank Tema":    best["rank"],
@@ -170,9 +171,11 @@ def build_crossref(records, scanner_results, sel_theme_ids, sel_scanner_ids):
             "RS":           meta.get("rs_rating") or 0,
             "Prezzo $":     round(meta.get("price") or 0, 2),
             "1D %":         round(meta.get("change_pct") or 0, 2),
+            "Mkt Cap $M":   round(mktcap / 1e6, 0) if mktcap else 0,
+            "Vol 50d":      round(volume / 1e6, 2) if volume else 0,
             "Scanner":      ", ".join(ticker_scanners[tk]),
             "Top Tema":     f"#{best['rank']} {best['theme'][:28]}",
-            "tv_symbol":    tv,
+            "_ticker":      tk,
         })
 
     rows.sort(key=lambda x: (-x["N.Scanner"], x["Rank Tema"]))
@@ -390,36 +393,63 @@ with tab_cross:
         sel_scanner_ids = set(SCANNERS.keys())
 
     crossref = build_crossref(records, scanner_results, sel_theme_ids, sel_scanner_ids)
-
-    col_f1, col_f2 = st.columns([1, 4])
-    with col_f1:
-        min_scan = st.selectbox("Min scanner", [1,2,3,4,5], index=0, key="min_sc")
-
     df_c = pd.DataFrame(crossref) if crossref else pd.DataFrame()
 
     if df_c.empty:
         st.warning("⚠️ Nessun titolo trovato. Modifica temi/scanner nella tab ⚙️ Configura.")
     else:
-        df_c = df_c[df_c["N.Scanner"] >= min_scan].drop(columns=["tv_symbol"]).reset_index(drop=True)
+        # ── FILTRI ──
+        f1, f2, f3, f4 = st.columns(4)
+        with f1:
+            min_scan = st.selectbox("Min scanner", [1,2,3,4,5], index=0, key="min_sc")
+        with f2:
+            mktcap_vals = df_c["Mkt Cap $M"][df_c["Mkt Cap $M"] > 0]
+            if not mktcap_vals.empty:
+                mc_min, mc_max = int(mktcap_vals.min()), int(mktcap_vals.max())
+                mc_range = st.slider("Mkt Cap ($M)", mc_min, max(mc_max,1), (mc_min, max(mc_max,1)), key="mc_range")
+            else:
+                mc_range = None
+        with f3:
+            vol_vals = df_c["Vol 50d"][df_c["Vol 50d"] > 0]
+            if not vol_vals.empty:
+                v_min, v_max = float(vol_vals.min()), float(vol_vals.max())
+                v_range = st.slider("Vol 50d ($M)", round(v_min,1), max(round(v_max,1),0.1),
+                                    (round(v_min,1), max(round(v_max,1),0.1)), key="vol_range")
+            else:
+                v_range = None
+        with f4:
+            rs_min = st.slider("Min RS Rating", 0, 99, 0, key="rs_min")
+
+        # Applica filtri
+        df_c = df_c[df_c["N.Scanner"] >= min_scan]
+        if mc_range and df_c["Mkt Cap $M"].max() > 0:
+            df_c = df_c[(df_c["Mkt Cap $M"] == 0) | (df_c["Mkt Cap $M"].between(*mc_range))]
+        if v_range and df_c["Vol 50d"].max() > 0:
+            df_c = df_c[(df_c["Vol 50d"] == 0) | (df_c["Vol 50d"].between(*v_range))]
+        df_c = df_c[df_c["RS"] >= rs_min]
+        df_c = df_c.drop(columns=["_ticker"]).reset_index(drop=True)
         df_c.index += 1
 
         # Metriche rapide
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Titoli trovati", len(df_c))
-        m2.metric("Media N.Scanner", f"{df_c['N.Scanner'].mean():.1f}")
-        m3.metric("Media TA", f"{df_c['TA'].mean():.1f}")
-        m4.metric("Media RS", f"{df_c['RS'].mean():.0f}")
+        m2.metric("Media N.Scanner", f"{df_c['N.Scanner'].mean():.1f}" if len(df_c) else "—")
+        m3.metric("Media TA", f"{df_c['TA'].mean():.1f}" if len(df_c) else "—")
+        m4.metric("Media RS", f"{df_c['RS'].mean():.0f}" if len(df_c) else "—")
 
         styled_c = (df_c.style
             .background_gradient(subset=["N.Scanner"], cmap="Oranges")
             .background_gradient(subset=["TA","FA","RS"], cmap="RdYlGn")
             .map(color_pct, subset=["1D %"])
             .format({
-                "N.Scanner": "{:.0f} ●",
-                "Rank Tema": "#{:.0f}",
-                "TA": "{:.1f}", "FA": "{:.1f}",
-                "Prezzo $": "${:.2f}",
-                "1D %": "{:+.2f}%",
+                "N.Scanner":  "{:.0f} ●",
+                "Rank Tema":  "#{:.0f}",
+                "TA":         "{:.1f}",
+                "FA":         "{:.1f}",
+                "Prezzo $":   "${:.2f}",
+                "1D %":       "{:+.2f}%",
+                "Mkt Cap $M": "{:,.0f}M",
+                "Vol 50d":    "{:.2f}M",
             })
         )
 
@@ -428,9 +458,14 @@ with tab_cross:
             use_container_width=True,
             height=560,
             column_config={
-                "📈": st.column_config.LinkColumn("📈", display_text="Chart", width="small"),
+                "Ticker": st.column_config.LinkColumn(
+                    "Ticker",
+                    display_text=r"symbol=(?:\w+:)?(\w+(?:\.\w+)?)",
+                    help="Clicca per aprire il grafico su TradingView",
+                ),
             },
-            column_order=["📈","Ticker","Nome","N.Scanner","Rank Tema","N.Temi",
-                          "TA","FA","RS","Prezzo $","1D %","Scanner","Top Tema"],
+            column_order=["Ticker","Nome","N.Scanner","Rank Tema","N.Temi",
+                          "TA","FA","RS","Prezzo $","1D %","Mkt Cap $M","Vol 50d",
+                          "Scanner","Top Tema"],
         )
         st.caption(f"{len(df_c)} titoli · {len(sel_theme_ids)} temi · {len(sel_scanner_ids)} scanner")
