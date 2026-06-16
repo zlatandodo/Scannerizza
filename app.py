@@ -189,7 +189,7 @@ def fetch_expirations(symbol: str):
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_gex(symbol: str, selected_exps: tuple) -> dict:
-    """Calculate Gamma Exposure per strike using Black-Scholes on yfinance option chains."""
+    """Calculate Gamma Exposure as a 2D matrix (strike × expiration) via Black-Scholes."""
     import time
 
     def bs_gamma(S, K, T, sigma, r=0.05):
@@ -210,7 +210,8 @@ def fetch_gex(symbol: str, selected_exps: tuple) -> dict:
         if not selected_exps:
             return {"_error": "Nessuna scadenza selezionata"}
 
-        gex_map   = {}
+        # matrix[exp][strike] = net GEX
+        matrix    = {}
         call_oi   = {}
         put_oi    = {}
         used_exps = []
@@ -222,52 +223,62 @@ def fetch_gex(symbol: str, selected_exps: tuple) -> dict:
             try:
                 chain = t.option_chain(exp)
                 time.sleep(0.1)
-                used_exps.append(exp)
             except Exception:
                 continue
+            used_exps.append(exp)
+            matrix[exp] = {}
 
             for _, row in chain.calls.iterrows():
                 iv, oi, k = row.get("impliedVolatility") or 0, row.get("openInterest") or 0, row.get("strike") or 0
                 if iv <= 0 or oi <= 0 or k <= 0:
                     continue
-                g = bs_gamma(spot, k, T, iv)
-                gex_map[k] = gex_map.get(k, 0) + g * oi * 100 * spot
-                call_oi[k] = call_oi.get(k, 0) + oi
+                gex = bs_gamma(spot, k, T, iv) * oi * 100 * spot
+                matrix[exp][k]  = matrix[exp].get(k, 0) + gex
+                call_oi[k]      = call_oi.get(k, 0) + oi
 
             for _, row in chain.puts.iterrows():
                 iv, oi, k = row.get("impliedVolatility") or 0, row.get("openInterest") or 0, row.get("strike") or 0
                 if iv <= 0 or oi <= 0 or k <= 0:
                     continue
-                g = bs_gamma(spot, k, T, iv)
-                gex_map[k] = gex_map.get(k, 0) - g * oi * 100 * spot
-                put_oi[k]  = put_oi.get(k, 0) + oi
+                gex = bs_gamma(spot, k, T, iv) * oi * 100 * spot
+                matrix[exp][k]  = matrix[exp].get(k, 0) - gex
+                put_oi[k]       = put_oi.get(k, 0) + oi
 
-        if not gex_map:
+        if not matrix:
             return {"_error": "Dati GEX insufficienti"}
 
-        filtered = {k: v for k, v in gex_map.items() if abs(k - spot) / spot <= 0.30}
-        if not filtered:
-            filtered = gex_map
+        # all strikes within ±20% of spot
+        all_strikes_raw = sorted({k for exp_data in matrix.values() for k in exp_data})
+        all_strikes = sorted([k for k in all_strikes_raw if abs(k - spot) / spot <= 0.20], reverse=True)
+        if not all_strikes:
+            all_strikes = sorted(all_strikes_raw, reverse=True)
 
-        net_gex      = sum(filtered.values())
-        sorted_items = sorted(filtered.items())
-        strikes      = [x[0] for x in sorted_items]
-        gex_vals     = [x[1] for x in sorted_items]
+        # net GEX per strike (sum across all exps)
+        net_by_strike = {}
+        for k in all_strikes:
+            net_by_strike[k] = sum(matrix[exp].get(k, 0) for exp in used_exps)
 
-        cumsum      = np.cumsum(gex_vals)
+        net_gex     = sum(net_by_strike.values())
+        gex_vals_asc = [net_by_strike[k] for k in sorted(all_strikes)]
+        cumsum      = np.cumsum(gex_vals_asc)
         flip_strike = None
+        strikes_asc = sorted(all_strikes)
         for i in range(len(cumsum) - 1):
             if cumsum[i] * cumsum[i + 1] < 0:
-                flip_strike = strikes[i]
+                flip_strike = strikes_asc[i]
                 break
 
-        call_wall = max(filtered, key=lambda k: call_oi.get(k, 0)) if call_oi else None
-        put_wall  = max(filtered, key=lambda k: put_oi.get(k, 0))  if put_oi  else None
+        call_wall = max(all_strikes, key=lambda k: call_oi.get(k, 0)) if call_oi else None
+        put_wall  = max(all_strikes, key=lambda k: put_oi.get(k, 0))  if put_oi  else None
 
         return {
-            "spot": spot, "strikes": strikes, "gex_vals": gex_vals,
-            "net_gex": net_gex, "flip_strike": flip_strike,
-            "call_wall": call_wall, "put_wall": put_wall,
+            "spot":        spot,
+            "matrix":      matrix,       # {exp: {strike: gex}}
+            "all_strikes": all_strikes,  # sorted desc
+            "net_gex":     net_gex,
+            "flip_strike": flip_strike,
+            "call_wall":   call_wall,
+            "put_wall":    put_wall,
             "expirations": used_exps,
         }
     except Exception as e:
@@ -679,159 +690,127 @@ with tab_gex:
                 st.error(f"Errore: {gdata['_error']}")
             else:
                 spot        = gdata["spot"]
-                strikes     = gdata["strikes"]
-                gex_vals    = gdata["gex_vals"]
+                matrix      = gdata["matrix"]
+                all_strikes = gdata["all_strikes"]   # sorted desc
                 net_gex     = gdata["net_gex"]
                 flip_strike = gdata["flip_strike"]
                 call_wall   = gdata["call_wall"]
                 put_wall    = gdata["put_wall"]
+                used_exps   = gdata["expirations"]
 
-                # metriche
-                m1, m2, m3, m4 = st.columns(4)
                 net_color = "#22c55e" if net_gex >= 0 else "#ef4444"
-                net_label = "LONG γ (stabilizzante)" if net_gex >= 0 else "SHORT γ (volatile)"
-                m1.markdown(
-                    f"<div class='metric-card'>"
-                    f"<div class='val' style='color:{net_color};font-size:16px'>{net_label}</div>"
-                    f"<div class='lbl'>Net GEX regime</div></div>",
-                    unsafe_allow_html=True,
-                )
-                m2.markdown(
-                    f"<div class='metric-card'>"
-                    f"<div class='val' style='font-size:20px'>${spot:.2f}</div>"
-                    f"<div class='lbl'>Prezzo spot</div></div>",
-                    unsafe_allow_html=True,
-                )
-                m3.markdown(
-                    f"<div class='metric-card'>"
-                    f"<div class='val' style='color:#22c55e;font-size:20px'>${call_wall or '—'}</div>"
-                    f"<div class='lbl'>Call Wall (max OI call)</div></div>",
-                    unsafe_allow_html=True,
-                )
-                m4.markdown(
-                    f"<div class='metric-card'>"
-                    f"<div class='val' style='color:#ef4444;font-size:20px'>${put_wall or '—'}</div>"
-                    f"<div class='lbl'>Put Wall (max OI put)</div></div>",
-                    unsafe_allow_html=True,
-                )
+
+                # ── HEADER METRICHE ──────────────────────────────────────────
+                hm1, hm2, hm3, hm4, hm5 = st.columns(5)
+                hm1.markdown(f"<div class='metric-card'><div class='val' style='font-size:22px'>${spot:.2f}</div><div class='lbl'>Spot</div></div>", unsafe_allow_html=True)
+                hm2.markdown(f"<div class='metric-card'><div class='val' style='color:{net_color};font-size:18px'>{'▲' if net_gex>=0 else '▼'} ${net_gex/1e9:.2f}B</div><div class='lbl'>Total Net GEX</div></div>", unsafe_allow_html=True)
+                hm3.markdown(f"<div class='metric-card'><div class='val' style='color:#f97316;font-size:18px'>${flip_strike or '—'}</div><div class='lbl'>Gamma Flip</div></div>", unsafe_allow_html=True)
+                hm4.markdown(f"<div class='metric-card'><div class='val' style='color:#22c55e;font-size:18px'>${call_wall or '—'}</div><div class='lbl'>Max +GEX (Call Wall)</div></div>", unsafe_allow_html=True)
+                hm5.markdown(f"<div class='metric-card'><div class='val' style='color:#ef4444;font-size:18px'>${put_wall or '—'}</div><div class='lbl'>Max -GEX (Put Wall)</div></div>", unsafe_allow_html=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
-                # ── GEX PROFILE CHART (stile Bullflow) ──────────────────────
-                # strikes sull'asse Y (alto = strike alto), GEX sull'asse X
-                s_arr = np.array(strikes)
-                g_arr = np.array([v / 1e6 for v in gex_vals])
+                # ── GEX HEATMAP (stile Bullflow) ─────────────────────────────
+                # calcola max abs per normalizzare l'intensità del colore
+                all_vals = [matrix[exp].get(k, 0) for exp in used_exps for k in all_strikes]
+                max_abs  = max((abs(v) for v in all_vals if v != 0), default=1)
 
-                # barre positive (verde) e negative (rosso) separate per colore pieno
-                pos_mask = g_arr >= 0
-                neg_mask = g_arr < 0
+                def cell_style(val):
+                    if val == 0:
+                        return "background:#111827;color:#374151;"
+                    intensity = min(abs(val) / max_abs, 1.0)
+                    alpha = 0.15 + intensity * 0.75
+                    if val > 0:
+                        r, g, b = 34, 197, 94
+                    else:
+                        r, g, b = 239, 68, 68
+                    txt = "#ffffff" if intensity > 0.35 else "#94a3b8"
+                    return f"background:rgba({r},{g},{b},{alpha:.2f});color:{txt};"
 
-                fig_gex = go.Figure()
+                def fmt_val(val):
+                    if val == 0:
+                        return ""
+                    m = val / 1e6
+                    if abs(m) >= 1000:
+                        return f"{m/1000:.1f}B"
+                    elif abs(m) >= 1:
+                        return f"{m:.1f}M"
+                    else:
+                        return f"{val/1e3:.0f}K"
 
-                # barre positive
-                fig_gex.add_trace(go.Bar(
-                    y=s_arr[pos_mask],
-                    x=g_arr[pos_mask],
-                    orientation="h",
-                    marker=dict(
-                        color="rgba(34,197,94,0.85)",
-                        line=dict(color="rgba(34,197,94,0.3)", width=0.5),
-                    ),
-                    name="Long γ",
-                    hovertemplate="$%{y:.0f} → GEX %{x:.2f}M<extra>Long γ</extra>",
-                ))
+                # short column headers: "Jun 20", "Dec 19"
+                col_labels = []
+                for exp in used_exps:
+                    try:
+                        col_labels.append(pd.Timestamp(exp).strftime("%b %d"))
+                    except Exception:
+                        col_labels.append(exp)
 
-                # barre negative
-                fig_gex.add_trace(go.Bar(
-                    y=s_arr[neg_mask],
-                    x=g_arr[neg_mask],
-                    orientation="h",
-                    marker=dict(
-                        color="rgba(239,68,68,0.85)",
-                        line=dict(color="rgba(239,68,68,0.3)", width=0.5),
-                    ),
-                    name="Short γ",
-                    hovertemplate="$%{y:.0f} → GEX %{x:.2f}M<extra>Short γ</extra>",
-                ))
+                # trova strike più vicino allo spot per highlight
+                spot_row = min(all_strikes, key=lambda k: abs(k - spot)) if all_strikes else None
 
-                def _hline(fig, y_val, color, width, dash, label):
-                    fig.add_shape(type="line", x0=0, x1=1, xref="paper",
-                                  y0=y_val, y1=y_val, yref="y",
-                                  line=dict(color=color, width=width, dash=dash))
-                    fig.add_annotation(x=1.01, y=y_val, xref="paper", yref="y",
-                                       text=label, showarrow=False,
-                                       font=dict(color=color, size=11),
-                                       xanchor="left", align="left")
+                # costruisci tabella HTML
+                th_style = "padding:6px 10px;text-align:center;font-size:11px;font-weight:700;color:#94a3b8;border-bottom:1px solid #1f2937;white-space:nowrap;background:#0f1117;"
+                td_strike_base = "padding:5px 10px;text-align:right;font-size:11px;font-weight:700;white-space:nowrap;border-right:2px solid #1f2937;"
+                td_cell_base   = "padding:5px 8px;text-align:right;font-size:11px;font-family:monospace;white-space:nowrap;min-width:70px;"
 
-                _hline(fig_gex, spot,        "#ffffff", 2,   "solid", f"Spot ${spot:.2f}")
-                if flip_strike:
-                    _hline(fig_gex, flip_strike, "#f97316", 1.5, "dash",  f"Flip ${flip_strike:.0f}")
-                if call_wall:
-                    _hline(fig_gex, call_wall,   "#4ade80", 1,   "dot",   f"Call Wall ${call_wall:.0f}")
-                if put_wall:
-                    _hline(fig_gex, put_wall,    "#f87171", 1,   "dot",   f"Put Wall ${put_wall:.0f}")
+                rows_html = ""
+                for k in all_strikes:
+                    is_spot_row  = (k == spot_row)
+                    is_flip_row  = (flip_strike and k == flip_strike)
+                    is_call_wall = (call_wall and k == call_wall)
+                    is_put_wall  = (put_wall and k == put_wall)
 
-                # shading zona sopra spot (bullish) vs sotto (bearish)
-                fig_gex.add_hrect(
-                    y0=spot, y1=max(strikes) * 1.02,
-                    fillcolor="rgba(34,197,94,0.04)",
-                    line_width=0,
-                    layer="below",
-                )
-                fig_gex.add_hrect(
-                    y0=min(strikes) * 0.98, y1=spot,
-                    fillcolor="rgba(239,68,68,0.04)",
-                    line_width=0,
-                    layer="below",
-                )
+                    if is_spot_row:
+                        strike_style = td_strike_base + "color:#ffffff;background:#1e3a5f;border-top:2px solid #3b82f6;border-bottom:2px solid #3b82f6;"
+                        row_border   = "border-top:2px solid #3b82f6;border-bottom:2px solid #3b82f6;"
+                    elif is_flip_row:
+                        strike_style = td_strike_base + "color:#f97316;background:#1a1207;"
+                        row_border   = "border-top:1px dashed #f97316;"
+                    elif is_call_wall:
+                        strike_style = td_strike_base + "color:#22c55e;"
+                        row_border   = ""
+                    elif is_put_wall:
+                        strike_style = td_strike_base + "color:#ef4444;"
+                        row_border   = ""
+                    else:
+                        strike_style = td_strike_base + "color:#94a3b8;"
+                        row_border   = ""
 
-                net_color  = "#22c55e" if net_gex >= 0 else "#ef4444"
-                net_label  = f"{'▲ LONG γ' if net_gex >= 0 else '▼ SHORT γ'}  ${net_gex/1e6:.1f}M"
-                exps_used  = gdata.get("expirations", [])
-                exps_label = "  ·  ".join(exps_used) if exps_used else "—"
+                    label_suffix = ""
+                    if is_spot_row:   label_suffix = " ◀"
+                    elif is_flip_row: label_suffix = " ⚡"
 
-                fig_gex.update_layout(
-                    paper_bgcolor="#0f1117",
-                    plot_bgcolor="#111827",
-                    font=dict(color="#e2e8f0", size=11, family="sans-serif"),
-                    barmode="overlay",
-                    bargap=0.15,
-                    xaxis=dict(
-                        title="GEX ($M)",
-                        gridcolor="#1f2937",
-                        zeroline=True, zerolinecolor="#374151", zerolinewidth=2,
-                        ticksuffix="M",
-                    ),
-                    yaxis=dict(
-                        title="Strike",
-                        gridcolor="#1f2937",
-                        tickprefix="$",
-                        dtick=None,
-                    ),
-                    margin=dict(l=10, r=120, t=50, b=10),
-                    height=560,
-                    showlegend=True,
-                    legend=dict(
-                        bgcolor="rgba(0,0,0,0)",
-                        borderwidth=0,
-                        x=0.01, y=0.99,
-                        font=dict(size=11),
-                    ),
-                    title=dict(
-                        text=(
-                            f"<b>{gex_input.upper()}</b>  GEX Profile"
-                            f"   <span style='color:{net_color}'>{net_label}</span>"
-                            f"   <span style='color:#64748b;font-size:11px'>· 6 scadenze · Black-Scholes</span>"
-                        ),
-                        font=dict(size=14, color="#f1f5f9"),
-                        x=0, xanchor="left",
-                    ),
-                )
-                st.plotly_chart(fig_gex, use_container_width=True)
-                st.caption(
-                    f"📅 Scadenze incluse nel calcolo: **{exps_label}** &nbsp;·&nbsp; "
-                    f"Dati Yahoo Finance · aggiornato ogni ora"
-                )
+                    cells = f"<td style='{strike_style}'>${k:.0f}{label_suffix}</td>"
+                    for exp in used_exps:
+                        val = matrix[exp].get(k, 0)
+                        cs  = cell_style(val) + row_border
+                        cells += f"<td style='{td_cell_base}{cs}'>{fmt_val(val)}</td>"
+
+                    rows_html += f"<tr>{cells}</tr>"
+
+                header_cells = f"<th style='{th_style}'>Strike</th>"
+                for lbl in col_labels:
+                    header_cells += f"<th style='{th_style}'>{lbl}</th>"
+
+                table_html = f"""
+                <div style='overflow-x:auto;overflow-y:auto;max-height:620px;border:1px solid #1f2937;border-radius:8px;'>
+                <table style='border-collapse:collapse;width:100%;'>
+                  <thead style='position:sticky;top:0;z-index:10;'>
+                    <tr>{header_cells}</tr>
+                  </thead>
+                  <tbody>{rows_html}</tbody>
+                </table>
+                </div>
+                <div style='margin-top:8px;font-size:11px;color:#4b5563;'>
+                  ◀ spot &nbsp;·&nbsp; ⚡ gamma flip &nbsp;·&nbsp;
+                  <span style='color:#22c55e'>■</span> long γ (dealer compra se scende) &nbsp;·&nbsp;
+                  <span style='color:#ef4444'>■</span> short γ (dealer vende se scende) &nbsp;·&nbsp;
+                  Black-Scholes · Yahoo Finance · aggiornato ogni ora
+                </div>
+                """
+
+                components.html(table_html, height=680, scrolling=True)
         else:
             st.info("👈 Inserisci un ticker e clicca **Calcola GEX**")
 
