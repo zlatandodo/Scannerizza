@@ -177,6 +177,110 @@ def company_card(tv_symbol: str, nome: str):
     st.markdown(f"> {desc[:700]}{'…' if len(desc) > 700 else ''}")
 
 
+@st.cache_data(show_spinner=False, ttl=86400)
+def fetch_stock_signals(symbol: str) -> dict:
+    """Returns short interest, days-to-cover, and next earnings date."""
+    ticker = symbol.split(":")[-1] if ":" in symbol else symbol
+    out = {}
+    try:
+        import time
+        time.sleep(0.3)
+        t    = yf.Ticker(ticker)
+        info = t.info or {}
+        out["short_pct"]   = info.get("shortPercentOfFloat")   # float 0-1
+        out["short_ratio"] = info.get("shortRatio")            # days to cover
+        # earnings
+        try:
+            cal = t.calendar
+            # yfinance returns dict or DataFrame depending on version
+            if isinstance(cal, dict):
+                dates = cal.get("Earnings Date") or []
+                if dates:
+                    dt = pd.Timestamp(dates[0])
+                    out["earnings_date"] = str(dt.date())
+                    out["earnings_days"] = (dt.date() - pd.Timestamp.now().date()).days
+            elif cal is not None and hasattr(cal, "columns"):
+                cols = list(cal.columns)
+                if cols:
+                    dt = pd.Timestamp(cols[0])
+                    out["earnings_date"] = str(dt.date())
+                    out["earnings_days"] = (dt.date() - pd.Timestamp.now().date()).days
+        except Exception:
+            pass
+    except Exception as e:
+        out["_error"] = str(e)
+    return out
+
+
+@st.cache_data(show_spinner=False, ttl=86400)
+def fetch_insider_buys(symbol: str) -> list:
+    """Returns recent Form 4 buy filings from SEC EDGAR (last 90 days)."""
+    ticker = symbol.split(":")[-1] if ":" in symbol else symbol
+    try:
+        cutoff = (pd.Timestamp.now() - pd.Timedelta(days=90)).strftime("%Y-%m-%d")
+        today  = pd.Timestamp.now().strftime("%Y-%m-%d")
+        url    = (f"https://efts.sec.gov/LATEST/search-index?q=%22{ticker}%22"
+                  f"&forms=4&dateRange=custom&startdt={cutoff}&enddt={today}")
+        resp   = requests.get(url, headers={"User-Agent": "dodoswingscanner/1.0 dodo.ebayer@gmail.com"}, timeout=10)
+        resp.raise_for_status()
+        hits = resp.json().get("hits", {}).get("hits", [])
+        buys = []
+        for h in hits[:10]:
+            src = h.get("_source", {})
+            buys.append({
+                "date":   src.get("file_date", ""),
+                "filer":  src.get("display_names", [""])[0] if src.get("display_names") else "",
+                "url":    "https://www.sec.gov/Archives/" + src.get("file_path", "").lstrip("/"),
+            })
+        return buys
+    except Exception:
+        return []
+
+
+@st.cache_data(show_spinner=False, ttl=3600)
+def fetch_unusual_flow(symbol: str) -> list:
+    """Detects unusual options activity: volume/OI > 3x on near-term expirations."""
+    import time
+    ticker = symbol.split(":")[-1] if ":" in symbol else symbol
+    unusual = []
+    try:
+        t    = yf.Ticker(ticker)
+        spot = t.fast_info.get("last_price") or 0
+        exps = (t.options or [])[:4]
+        for exp in exps:
+            try:
+                chain = t.option_chain(exp)
+                time.sleep(0.1)
+            except Exception:
+                continue
+            for side, df in [("CALL", chain.calls), ("PUT", chain.puts)]:
+                for _, row in df.iterrows():
+                    vol = row.get("volume") or 0
+                    oi  = max(row.get("openInterest") or 0, 1)
+                    k   = row.get("strike") or 0
+                    iv  = row.get("impliedVolatility") or 0
+                    if vol < 200 or k <= 0:
+                        continue
+                    ratio = vol / oi
+                    if ratio < 3:
+                        continue
+                    otm = abs(k - spot) / spot * 100 if spot else 0
+                    unusual.append({
+                        "Exp":      exp,
+                        "Tipo":     side,
+                        "Strike":   k,
+                        "OTM %":    round(otm, 1),
+                        "Volume":   int(vol),
+                        "OI":       int(oi),
+                        "Vol/OI":   round(ratio, 1),
+                        "IV %":     round(iv * 100, 1),
+                    })
+        unusual.sort(key=lambda x: x["Vol/OI"], reverse=True)
+        return unusual[:20]
+    except Exception:
+        return []
+
+
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_expirations(symbol: str):
     """Return list of available expiration dates for a ticker."""
@@ -854,6 +958,45 @@ I market maker che vendono opzioni devono coprirsi comprando/vendendo il sottost
                 """
 
                 components.html(table_html, height=680, scrolling=True)
+
+                # ── UNUSUAL FLOW ─────────────────────────────────────────────
+                st.markdown("### 🔥 Unusual Options Flow")
+                st.caption("Strike con Volume/OI > 3× sulle prime 4 scadenze — possibile attività istituzionale")
+                with st.spinner("Analisi flow opzioni..."):
+                    uflow = fetch_unusual_flow(gex_input)
+                if uflow:
+                    df_uf = pd.DataFrame(uflow)
+                    def color_tipo(val):
+                        return "color:#22c55e;font-weight:700" if val == "CALL" else "color:#ef4444;font-weight:700"
+                    def color_ratio(val):
+                        if val >= 10: return "color:#f97316;font-weight:800"
+                        if val >= 5:  return "color:#eab308;font-weight:700"
+                        return ""
+                    styled_uf = (df_uf.style
+                        .map(color_tipo, subset=["Tipo"])
+                        .map(color_ratio, subset=["Vol/OI"])
+                        .format({"Strike": "${:.0f}", "OTM %": "{:.1f}%", "IV %": "{:.0f}%",
+                                 "Volume": "{:,.0f}", "OI": "{:,.0f}", "Vol/OI": "{:.1f}×"})
+                        .background_gradient(subset=["Vol/OI"], cmap="Oranges")
+                    )
+                    st.dataframe(styled_uf, use_container_width=True, hide_index=True)
+                else:
+                    st.info("Nessun flow insolito rilevato (Volume/OI < 3× o dati insufficienti)")
+
+                # ── INSIDER BUYING ───────────────────────────────────────────
+                st.markdown("### 🏦 Insider Buying (SEC Form 4 — ultimi 90 giorni)")
+                with st.spinner("Ricerca filing SEC..."):
+                    ins = fetch_insider_buys(gex_input)
+                if ins:
+                    for f in ins:
+                        st.markdown(
+                            f"📄 **{f['date']}** — {f['filer']} &nbsp; "
+                            f"[→ Filing SEC]({f['url']})",
+                            unsafe_allow_html=True,
+                        )
+                else:
+                    st.info("Nessun Form 4 trovato negli ultimi 90 giorni")
+
         else:
             st.info("👈 Inserisci un ticker e clicca **Calcola GEX**")
 
@@ -1073,6 +1216,44 @@ with tab_cross:
                 else:
                     tooltip = tv_sym
 
+                # signals: short interest + earnings + insider
+                sigs       = fetch_stock_signals(tv_sym)
+                insiders   = fetch_insider_buys(tv_sym)
+                sig_badges = ""
+
+                earn_days = sigs.get("earnings_days")
+                if earn_days is not None:
+                    if earn_days < 0:
+                        eb_col, eb_txt = "#64748b", f"Earn {-earn_days}d fa"
+                    elif earn_days == 0:
+                        eb_col, eb_txt = "#ef4444", "Earn OGGI"
+                    elif earn_days <= 7:
+                        eb_col, eb_txt = "#ef4444", f"📅 Earn {earn_days}d"
+                    elif earn_days <= 21:
+                        eb_col, eb_txt = "#eab308", f"📅 Earn {earn_days}d"
+                    else:
+                        eb_col, eb_txt = "#3b82f6", f"📅 Earn {earn_days}d"
+                    sig_badges += (f"<span style='background:{eb_col}22;border:1px solid {eb_col};color:{eb_col};"
+                                   f"font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin:1px'>{eb_txt}</span>")
+
+                short_pct = sigs.get("short_pct")
+                if short_pct and short_pct > 0.05:
+                    sc = "#ef4444" if short_pct > 0.15 else "#eab308" if short_pct > 0.08 else "#94a3b8"
+                    sig_badges += (f"<span style='background:{sc}22;border:1px solid {sc};color:{sc};"
+                                   f"font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin:1px'>"
+                                   f"Short {short_pct*100:.0f}%</span>")
+
+                days_cover = sigs.get("short_ratio")
+                if days_cover and days_cover > 5:
+                    sig_badges += (f"<span style='background:#7c3aed22;border:1px solid #7c3aed;color:#a78bfa;"
+                                   f"font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin:1px'>"
+                                   f"DTC {days_cover:.0f}d</span>")
+
+                if insiders:
+                    sig_badges += (f"<span style='background:#06b6d422;border:1px solid #06b6d4;color:#22d3ee;"
+                                   f"font-size:10px;font-weight:700;padding:1px 6px;border-radius:4px;margin:1px'>"
+                                   f"🏦 Insider x{len(insiders)}</span>")
+
                 with cols[i % n_cols]:
                     scanner_badges = "".join(
                         f"<span style='background:#f97316;color:#fff;font-size:11px;"
@@ -1086,7 +1267,8 @@ with tab_cross:
                         f"<span style='color:#64748b;font-size:11px'>R#{row['Rank Tema']} · "
                         f"TA {row['TA']:.0f} · RS {row['RS']}</span>"
                         f"</div>"
-                        f"<div style='margin-bottom:4px'>{scanner_badges}</div>",
+                        f"<div style='margin-bottom:2px'>{scanner_badges}</div>"
+                        f"<div style='margin-bottom:4px'>{sig_badges}</div>",
                         unsafe_allow_html=True,
                     )
                     components.html(f"""
