@@ -741,56 +741,22 @@ with tab_gex:
                     hovertemplate="$%{y:.0f} → GEX %{x:.2f}M<extra>Short γ</extra>",
                 ))
 
-                # linea spot orizzontale (prominente, bianca)
-                fig_gex.add_hline(
-                    y=spot,
-                    line=dict(color="#ffffff", width=2, dash="solid"),
-                    annotation=dict(
-                        text=f"  Spot ${spot:.2f}",
-                        font=dict(color="#ffffff", size=12, family="monospace"),
-                        xanchor="left", x=1.01, xref="paper",
-                        showarrow=False,
-                    ),
-                )
+                def _hline(fig, y_val, color, width, dash, label):
+                    fig.add_shape(type="line", x0=0, x1=1, xref="paper",
+                                  y0=y_val, y1=y_val, yref="y",
+                                  line=dict(color=color, width=width, dash=dash))
+                    fig.add_annotation(x=1.01, y=y_val, xref="paper", yref="y",
+                                       text=label, showarrow=False,
+                                       font=dict(color=color, size=11),
+                                       xanchor="left", align="left")
 
-                # gamma flip (arancione tratteggiato)
+                _hline(fig_gex, spot,        "#ffffff", 2,   "solid", f"Spot ${spot:.2f}")
                 if flip_strike:
-                    fig_gex.add_hline(
-                        y=flip_strike,
-                        line=dict(color="#f97316", width=1.5, dash="dash"),
-                        annotation=dict(
-                            text=f"  Flip ${flip_strike:.0f}",
-                            font=dict(color="#f97316", size=11),
-                            xanchor="left", x=1.01, xref="paper",
-                            showarrow=False,
-                        ),
-                    )
-
-                # call wall (verde tratteggiato)
+                    _hline(fig_gex, flip_strike, "#f97316", 1.5, "dash",  f"Flip ${flip_strike:.0f}")
                 if call_wall:
-                    fig_gex.add_hline(
-                        y=call_wall,
-                        line=dict(color="#4ade80", width=1, dash="dot"),
-                        annotation=dict(
-                            text=f"  Call Wall ${call_wall:.0f}",
-                            font=dict(color="#4ade80", size=10),
-                            xanchor="left", x=1.01, xref="paper",
-                            showarrow=False,
-                        ),
-                    )
-
-                # put wall (rosso tratteggiato)
+                    _hline(fig_gex, call_wall,   "#4ade80", 1,   "dot",   f"Call Wall ${call_wall:.0f}")
                 if put_wall:
-                    fig_gex.add_hline(
-                        y=put_wall,
-                        line=dict(color="#f87171", width=1, dash="dot"),
-                        annotation=dict(
-                            text=f"  Put Wall ${put_wall:.0f}",
-                            font=dict(color="#f87171", size=10),
-                            xanchor="left", x=1.01, xref="paper",
-                            showarrow=False,
-                        ),
-                    )
+                    _hline(fig_gex, put_wall,    "#f87171", 1,   "dot",   f"Put Wall ${put_wall:.0f}")
 
                 # shading zona sopra spot (bullish) vs sotto (bearish)
                 fig_gex.add_hrect(
