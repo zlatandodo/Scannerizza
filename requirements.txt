@@ -6,6 +6,8 @@ pandas
 plotly
 matplotlib
 yfinance
+scipy
+numpy
 gspread
 google-auth
 google-auth-oauthlib
