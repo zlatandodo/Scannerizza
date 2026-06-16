@@ -202,10 +202,11 @@ def fetch_gex(symbol: str) -> dict:
         if not exps:
             return {"_error": "Nessuna opzione disponibile per questo ticker"}
 
-        gex_map   = {}   # strike → net GEX
-        call_oi   = {}   # strike → call OI
-        put_oi    = {}   # strike → put OI
-        today     = pd.Timestamp.now(tz="UTC").normalize()
+        gex_map      = {}   # strike → net GEX
+        call_oi      = {}   # strike → call OI
+        put_oi       = {}   # strike → put OI
+        used_exps    = []
+        today        = pd.Timestamp.now(tz="UTC").normalize()
 
         for exp in exps[:6]:   # prime 6 scadenze
             exp_ts = pd.Timestamp(exp, tz="UTC")
@@ -213,6 +214,7 @@ def fetch_gex(symbol: str) -> dict:
             try:
                 chain = t.option_chain(exp)
                 time.sleep(0.1)
+                used_exps.append(exp)
             except Exception:
                 continue
 
@@ -270,6 +272,7 @@ def fetch_gex(symbol: str) -> dict:
             "flip_strike": flip_strike,
             "call_wall":   call_wall,
             "put_wall":    put_wall,
+            "expirations": used_exps,
         }
     except Exception as e:
         return {"_error": str(e)}
@@ -772,8 +775,10 @@ with tab_gex:
                     layer="below",
                 )
 
-                net_color = "#22c55e" if net_gex >= 0 else "#ef4444"
-                net_label = f"{'▲ LONG γ' if net_gex >= 0 else '▼ SHORT γ'}  ${net_gex/1e6:.1f}M"
+                net_color  = "#22c55e" if net_gex >= 0 else "#ef4444"
+                net_label  = f"{'▲ LONG γ' if net_gex >= 0 else '▼ SHORT γ'}  ${net_gex/1e6:.1f}M"
+                exps_used  = gdata.get("expirations", [])
+                exps_label = "  ·  ".join(exps_used) if exps_used else "—"
 
                 fig_gex.update_layout(
                     paper_bgcolor="#0f1117",
@@ -813,7 +818,10 @@ with tab_gex:
                     ),
                 )
                 st.plotly_chart(fig_gex, use_container_width=True)
-                st.caption("Dati Yahoo Finance · aggiornato ogni ora · zona verde = sopra spot (bullish), zona rossa = sotto spot (bearish)")
+                st.caption(
+                    f"📅 Scadenze incluse nel calcolo: **{exps_label}** &nbsp;·&nbsp; "
+                    f"Dati Yahoo Finance · aggiornato ogni ora"
+                )
         else:
             st.info("👈 Inserisci un ticker e clicca **Calcola GEX**")
 
