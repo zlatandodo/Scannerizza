@@ -626,13 +626,56 @@ with tab_chart:
 # TAB 4 — GEX MAP
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_gex:
+    with st.expander("📖 Come leggere la GEX Map — guida e affidabilità", expanded=False):
+        st.markdown("""
+**Cos'è il GEX (Gamma Exposure)?**
+I market maker che vendono opzioni devono coprirsi comprando/vendendo il sottostante man mano che il prezzo si muove. Il GEX misura *quanto* devono coprire per ogni punto di movimento: più è alto, più il loro hedging influenza il prezzo.
+
+---
+
+**Come leggere la heatmap:**
+
+| Elemento | Significato |
+|---|---|
+| 🟩 **Cella verde** | GEX positivo: dealer long gamma → comprano quando il prezzo scende, vendono quando sale → **effetto magnete/frenante** |
+| 🟥 **Cella rossa** | GEX negativo: dealer short gamma → vendono quando il prezzo scende, comprano quando sale → **effetto amplificatore** |
+| **Intensità colore** | Più saturo = più GEX in quel nodo. Le celle più accese sono i livelli chiave |
+| ◀ **Riga spot** | Prezzo attuale del titolo (bordo blu) |
+| ⚡ **Gamma Flip** | Strike dove il GEX totale cambia segno. **Sopra il flip = regime stabilizzante, sotto = regime volatile** |
+| **Call Wall** | Strike con il massimo OI call — resistenza magnetica verso l'alto |
+| **Put Wall** | Strike con il massimo OI put — supporto magnetico verso il basso |
+| **Colonne** | Ogni colonna = una scadenza. Le scadenze più vicine (colonne sx) pesano di più sul GEX corrente |
+
+---
+
+**Come usarla nel trading:**
+
+1. **Identifica il regime**: se spot > gamma flip → il mercato si muove lentamente, i breakout faticano. Se spot < gamma flip → volatilità alta, i movimenti si amplificano
+2. **Call Wall = resistenza naturale**: il prezzo tende a frenare lì prima delle scadenze, poi può romperla dopo
+3. **Put Wall = supporto naturale**: zona dove i dealer comprano aggressivamente — utile come target di stop o area di rimbalzo
+4. **Nodi rossi intensi vicino allo spot**: zone di accelerazione se il prezzo ci passa sopra/sotto
+5. **Scadenze vicine contano di più**: un muro grosso sulla scadenza settimanale è più rilevante di uno mensile
+
+---
+
+**⚠️ Limiti di questa implementazione:**
+
+- **OI aggiornato una volta al giorno** da Yahoo Finance — il GEX intraday non è catturato
+- **Affidabile su titoli liquidi** con alto OI (SPY, QQQ, NVDA, AAPL, TSLA, MSFT). Su small cap con poche opzioni il segnale è rumore
+- **Non include dealer positioning reale** — servizi come Bullflow usano dati proprietari sui flussi, non solo OI
+- **Gamma calcolato su IV snapshot** — cambia durante il giorno con il movimento del prezzo
+
+**Usala come mappa strutturale** (dove sono i muri chiave, sopra/sotto il flip), non come segnale preciso al tick.
+        """)
+
     st.markdown(
         "<div style='background:#1a1d27;border:1px solid #2a2d3a;border-radius:8px;"
-        "padding:10px 18px;margin-bottom:16px;font-size:13px;color:#94a3b8'>"
-        "📐 <strong style='color:#e2e8f0'>Gamma Exposure (GEX)</strong> — calcolato da option chain Yahoo Finance via Black-Scholes. "
-        "Barre verdi = dealer long gamma (mercato tende a stabilizzarsi). "
-        "Barre rosse = dealer short gamma (mercato amplifica i movimenti). "
-        "La <strong style='color:#f97316'>linea arancione</strong> è il Gamma Flip: sopra = regime bullish, sotto = bearish."
+        "padding:8px 16px;margin-bottom:12px;font-size:12px;color:#64748b'>"
+        "📐 <strong style='color:#94a3b8'>GEX Map</strong> — "
+        "<span style='color:#22c55e'>■ verde</span> = dealer long γ (frenante) &nbsp;·&nbsp; "
+        "<span style='color:#ef4444'>■ rosso</span> = dealer short γ (amplificante) &nbsp;·&nbsp; "
+        "<span style='color:#f97316'>⚡ flip</span> = cambio regime &nbsp;·&nbsp; "
+        "OI da Yahoo Finance · Black-Scholes · snapshot giornaliero"
         "</div>",
         unsafe_allow_html=True,
     )
