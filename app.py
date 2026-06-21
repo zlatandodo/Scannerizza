@@ -6,6 +6,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import yfinance as yf
 import streamlit.components.v1 as components
+import xml.etree.ElementTree as ET
+import re
+import time
 from scipy.stats import norm
 
 # ── CONFIG ────────────────────────────────────────────────────────────────────
@@ -94,7 +97,6 @@ def fetch_scanner(session, scanner_id):
 
 @st.cache_data(show_spinner=False, ttl=86400)
 def fetch_company_info(tv_symbol: str) -> dict:
-    import time
     ticker = tv_symbol.split(":")[-1] if ":" in tv_symbol else tv_symbol
     # --- try 1: yfinance (handles Yahoo auth internally) ---
     try:
@@ -183,7 +185,6 @@ def fetch_stock_signals(symbol: str) -> dict:
     ticker = symbol.split(":")[-1] if ":" in symbol else symbol
     out = {}
     try:
-        import time
         time.sleep(0.3)
         t    = yf.Ticker(ticker)
         info = t.info or {}
@@ -215,7 +216,6 @@ def fetch_stock_signals(symbol: str) -> dict:
 @st.cache_data(show_spinner=False, ttl=86400)
 def fetch_insider_buys(symbol: str) -> list:
     """Parses Form 4 XML from SEC EDGAR — returns buys with role, shares, price, total value."""
-    import xml.etree.ElementTree as ET, re, time
     ticker  = symbol.split(":")[-1] if ":" in symbol else symbol
     hdrs    = {"User-Agent": "dodoswingscanner/1.0 dodo.ebayer@gmail.com"}
     results = []
@@ -305,7 +305,6 @@ def fetch_insider_buys(symbol: str) -> list:
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_unusual_flow(symbol: str) -> list:
     """Detects unusual options activity: volume/OI > 3x on near-term expirations."""
-    import time
     ticker = symbol.split(":")[-1] if ":" in symbol else symbol
     unusual = []
     try:
@@ -359,7 +358,6 @@ def fetch_expirations(symbol: str):
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_gex(symbol: str, selected_exps: tuple) -> dict:
     """Calculate Gamma Exposure as a 2D matrix (strike × expiration) via Black-Scholes."""
-    import time
 
     def bs_gamma(S, K, T, sigma, r=0.05):
         if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
